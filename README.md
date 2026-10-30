@@ -1,1 +1,9 @@
-# geoip-maxmind-geolite2
+- [GeoLite2-Country.mmdb](https://github.com/weveinfo-com/maxmind-geolite2/releases/latest/download/GeoLite2-Country.mmdb)
+- [GeoLite2-Country.mmdb.sha256](https://github.com/weveinfo-com/maxmind-geolite2/releases/latest/download/GeoLite2-Country.mmdb.sha256)
+- [GeoLite2-Country-CSV.zip — 원본 CSV ZIP](https://github.com/weveinfo-com/maxmind-geolite2/releases/latest/download/GeoLite2-Country-CSV.zip)
+- [GeoLite2-Country-Blocks-IPv4.csv](https://github.com/weveinfo-com/maxmind-geolite2/releases/latest/download/GeoLite2-Country-Blocks-IPv4.csv)
+- [GeoLite2-Country-Blocks-IPv6.csv](https://github.com/weveinfo-com/maxmind-geolite2/releases/latest/download/GeoLite2-Country-Blocks-IPv6.csv)
+- [GeoLite2-Country-Locations-en.csv](https://github.com/weveinfo-com/maxmind-geolite2/releases/latest/download/GeoLite2-Country-Locations-en.csv)
+- [SHA256SUMS — 모든 첨부파일 해시](https://github.com/weveinfo-com/maxmind-geolite2/releases/latest/download/SHA256SUMS)
+- [metadata.json](https://github.com/weveinfo-com/maxmind-geolite2/releases/latest/download/metadata.json)
+- [전체 Release](https://github.com/weveinfo-com/maxmind-geolite2/releases)

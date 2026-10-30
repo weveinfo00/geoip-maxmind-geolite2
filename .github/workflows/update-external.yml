@@ -1,0 +1,4 @@
+name: Update GeoLite2 Externl
+
+on:
+  workflow_dispatch:

@@ -1,0 +1,2 @@
+# Official MaxMind reader. Python >= 3.10. Verified 2026-10-30.
+maxminddb==3.2.0

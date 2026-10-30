@@ -1,0 +1,58 @@
+name: Update GeoLite2 Country
+
+on:
+  schedule:
+    # 수·토 21:47 Asia/Seoul (정각 부하 회피)
+    # - cron: '51 07 * * 3,6'
+    - cron: '*/10 8,9 * * *'
+      timezone: 'Asia/Seoul'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: update-geolite2-country
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Check MaxMind configuration
+        id: config
+        shell: bash
+        env:
+          MAXMIND_ACCOUNT_ID: ${{ secrets.MAXMIND_ACCOUNT_ID }}
+          MAXMIND_LICENSE_KEY: ${{ secrets.MAXMIND_LICENSE_KEY }}
+        run: |
+          if [[ -z "$MAXMIND_ACCOUNT_ID" || -z "$MAXMIND_LICENSE_KEY" ]]; then
+            echo 'ready=false' >> "$GITHUB_OUTPUT"
+            echo '::notice::Add MAXMIND_ACCOUNT_ID and MAXMIND_LICENSE_KEY in Settings > Secrets and variables > Actions.'
+            echo 'MaxMind Secrets가 등록되지 않아 MMDB·CSV 다운로드와 Release 게시를 건너뛰었습니다.' >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo 'ready=true' >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Install MMDB reader
+        if: steps.config.outputs.ready == 'true'
+        run: |
+          python3 -m venv .venv
+          .venv/bin/python -m pip install --disable-pip-version-check --no-input -r requirements.txt
+
+      - name: Download, validate, publish and clean old releases
+        if: steps.config.outputs.ready == 'true'
+        env:
+          MAXMIND_ACCOUNT_ID: ${{ secrets.MAXMIND_ACCOUNT_ID }}
+          MAXMIND_LICENSE_KEY: ${{ secrets.MAXMIND_LICENSE_KEY }}
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TARGET: ${{ github.event.repository.default_branch || github.ref_name }}
+          KEEP_RELEASES: ${{ vars.KEEP_RELEASES || '1' }}
+          MAX_AGE_DAYS: '30'
+        run: .venv/bin/python scripts/sync_country.py
