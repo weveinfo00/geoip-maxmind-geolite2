@@ -18,9 +18,46 @@
     "GeoLite2-Country-Locations-zh-CN.csv"
   ],
   "csv_sha256": "02b71e8a161620a97a49bae8c6eab8e5bc58425a9d1565036c604158b4219bd0",
-  "revision": "0446433d2799",
+  "city": {
+    "database_type": "GeoLite2-City",
+    "build_epoch": 1793379056,
+    "ip_version": 6,
+    "sha256": "9e52c48135043b0610c10d464151b9d26f7a6d91053b9243f1da9b5b9f9d5563",
+    "last_modified": "2026-10-30T18:31:16+00:00",
+    "csv_last_modified": "2026-10-30T18:31:22+00:00",
+    "csv_files": [
+      "GeoLite2-City-Blocks-IPv4.csv",
+      "GeoLite2-City-Blocks-IPv6.csv",
+      "GeoLite2-City-Locations-de.csv",
+      "GeoLite2-City-Locations-en.csv",
+      "GeoLite2-City-Locations-es.csv",
+      "GeoLite2-City-Locations-fr.csv",
+      "GeoLite2-City-Locations-ja.csv",
+      "GeoLite2-City-Locations-pt-BR.csv",
+      "GeoLite2-City-Locations-ru.csv",
+      "GeoLite2-City-Locations-zh-CN.csv"
+    ],
+    "csv_sha256": "8fe2f7e930509a6cc18dd5f6427285fe4934cd9a78fcd3fa3856a2f398022771"
+  },
+  "revision": "7c6831fec7e4",
   "assets": {
     "COPYRIGHT.txt": "165e2f989059d62bdbfa363fd4267615a3ecb9f920fb12bb80be5976541f79cf",
+    "GeoLite2-City-Blocks-IPv4.csv": "400e190409cd53f262f471e8c7c62134832d84afd9a7ff0d5169375ccba2fc1b",
+    "GeoLite2-City-Blocks-IPv6.csv": "38077f9d80411bbda4470c72bbab5e135a0c36f4c0f6c4115d3aaf5350978179",
+    "GeoLite2-City-COPYRIGHT.txt": "165e2f989059d62bdbfa363fd4267615a3ecb9f920fb12bb80be5976541f79cf",
+    "GeoLite2-City-CSV.zip": "8fe2f7e930509a6cc18dd5f6427285fe4934cd9a78fcd3fa3856a2f398022771",
+    "GeoLite2-City-CSV.zip.sha256": "4dbb8702f09c7babb4dc4d34480ee526e42a376d014e7bdea6200ecf687581a3",
+    "GeoLite2-City-LICENSE.txt": "e5b97e4f3abe0f7d26cba4823db47b91f2894d46cb803e5c07a928ed566d24c6",
+    "GeoLite2-City-Locations-de.csv": "d5fa308629babe7b76dbf57a0d600938478ef3146047d6c4872b7981451b6457",
+    "GeoLite2-City-Locations-en.csv": "8be4d473ee37a5f66cf7fef9ef445ca70e1027d873c6c20ecdad6ac1734ef737",
+    "GeoLite2-City-Locations-es.csv": "5011ea5579ec08e9535cbc261861dd3f7cfe41ff6ac7d87bfe8a365096f31039",
+    "GeoLite2-City-Locations-fr.csv": "0286670fbcbed97703503400667ea9e28962bdcb373c40005f8b39d3c32a4be6",
+    "GeoLite2-City-Locations-ja.csv": "ca94238995dc06f783485c6ebfdf8155c289e9078c4c4863229088a7db18fef2",
+    "GeoLite2-City-Locations-pt-BR.csv": "828931c01a5a37cf7a09ac2c5bd160bf43777cc5a25ad717327952f82dec2d76",
+    "GeoLite2-City-Locations-ru.csv": "b98a97dc91ae8492c83144109d8c142d836b4d4146d8f7f6e5c41c59c0ee850b",
+    "GeoLite2-City-Locations-zh-CN.csv": "05332096d4cce884c2f3caaa3152f7b35e9593ffe1a323bdc2b79a4708be6e17",
+    "GeoLite2-City.mmdb": "9e52c48135043b0610c10d464151b9d26f7a6d91053b9243f1da9b5b9f9d5563",
+    "GeoLite2-City.mmdb.sha256": "15db88198240cab48e7e3314de2c26acb6e1625ddbbe954c386f6af5f3854e57",
     "GeoLite2-Country-Blocks-IPv4.csv": "c3e151ce99079027e7f702925a03ac8879b4dd4da123b7f5eea7578f545f9e5a",
     "GeoLite2-Country-Blocks-IPv6.csv": "8f8a03efa29c408f634d28528a0fe27a3a40d433a71b14f3e6d5dec81ff656f4",
     "GeoLite2-Country-CSV.zip": "02b71e8a161620a97a49bae8c6eab8e5bc58425a9d1565036c604158b4219bd0",
@@ -37,6 +74,6 @@
     "GeoLite2-Country.mmdb.sha256": "44760d77afd24af4b4cc7c2c8328b0710dccc0fe48f4e4ea08301a377505b594",
     "LICENSE.txt": "e5b97e4f3abe0f7d26cba4823db47b91f2894d46cb803e5c07a928ed566d24c6"
   },
-  "release_tag": "geolite2-country-1793379056-0446433d2799",
-  "checked_at": "2026-10-31T12:24:46.515775+00:00"
+  "release_tag": "geolite2-country-1793379056-7c6831fec7e4",
+  "checked_at": "2026-11-01T00:29:49.422435+00:00"
 }
