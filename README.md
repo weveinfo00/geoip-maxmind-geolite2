@@ -4,7 +4,7 @@
 - [GeoLite2-Country-Blocks-IPv4.csv](https://github.com/weveinfo00/geoip-maxmind-geolite2/releases/latest/download/GeoLite2-Country-Blocks-IPv4.csv)
 - [GeoLite2-Country-Blocks-IPv6.csv](https://github.com/weveinfo00/geoip-maxmind-geolite2/releases/latest/download/GeoLite2-Country-Blocks-IPv6.csv)
 - [GeoLite2-Country-Locations-en.csv](https://github.com/weveinfo00/geoip-maxmind-geolite2/releases/latest/download/GeoLite2-Country-Locations-en.csv)
-- [최신 City MMDB](https://github.com/{repository}/releases/latest/download/GeoLite2-City.mmdb)
+- [최신 City MMDB](https://github.com/weveinfo00/geoip-maxmind-geolite2/releases/latest/download/GeoLite2-City.mmdb)
 - [SHA256SUMS — 모든 첨부파일 해시](https://github.com/weveinfo00/geoip-maxmind-geolite2/releases/latest/download/SHA256SUMS)
 - [metadata.json](https://github.com/weveinfo00/geoip-maxmind-geolite2/releases/latest/download/metadata.json)
 - [전체 Release](https://github.com/weveinfo00/geoip-maxmind-geolite2/releases)
