@@ -35,6 +35,9 @@ CITY_CSV_ARCHIVE = CITY_CSV_EDITION + '.zip'
 CITY_REQUIRED_CSV = {CITY_EDITION + '-Blocks-IPv4.csv', CITY_EDITION + '-Blocks-IPv6.csv',
                      CITY_EDITION + '-Locations-en.csv'}
 CITY_LICENSE_ASSETS = {CITY_EDITION + '-COPYRIGHT.txt', CITY_EDITION + '-LICENSE.txt'}
+# Korean uses locale 'ko', not the country code 'KR'. Include it only if supplied.
+LOCATION_LOCALES = frozenset({'en', 'ko'})
+CSV_ARCHIVE_POLICY = 'locations-en-ko-v1'
 MARKER = '<!-- geolite2-country-sync:v1 '
 TAG_RE = re.compile(r'^geolite2-country-([0-9]{9,12})-([0-9a-f]{12})$')
 STATE_PATH = '.github/sync-state.json'
@@ -136,6 +139,9 @@ def complete(release: dict, *, require_city: bool = True) -> bool:
     meta = release_metadata(release) or {}
     if not meta or (require_city and not meta.get('city')):
         return False
+    if require_city and (meta.get('csv_archive_policy') != CSV_ARCHIVE_POLICY
+                         or any(excluded_location(name) for name in assets)):
+        return False
     expected = (REQUIRED_ASSETS if require_city else COUNTRY_REQUIRED_ASSETS) | set(meta.get('assets', {}))
     return not release.get('draft') and not release.get('prerelease') and expected <= assets
 
@@ -235,9 +241,49 @@ def extract_files(archive: Path, target: Path, *, edition: str = EDITION) -> Non
         raise SyncError('압축파일에 MMDB, COPYRIGHT.txt 또는 LICENSE.txt가 없습니다.')
 
 
+def excluded_location(name: str) -> bool:
+    match = re.fullmatch(r'GeoLite2-(?:Country|City)-Locations-([A-Za-z-]+)\.csv', name)
+    return bool(match and match[1] not in LOCATION_LOCALES)
+
+
+def filter_csv_archive(archive: Path) -> None:
+    """Repack the verified original ZIP, keeping en/ko Locations and all other files."""
+    filtered = archive.with_suffix(archive.suffix + '.filtered')
+    try:
+        with zipfile.ZipFile(archive) as source, zipfile.ZipFile(
+                filtered, 'w', compression=zipfile.ZIP_DEFLATED, compresslevel=6) as output:
+            entries = source.infolist()
+            if len(entries) > 100 or sum(i.file_size for i in entries) > MAX_CSV_UNPACKED_BYTES:
+                raise SyncError('CSV ZIP의 크기 또는 항목 수가 허용 범위를 벗어났습니다.')
+            seen = set()
+            for member in entries:
+                path = PurePosixPath(member.filename)
+                if (path.is_absolute() or '..' in path.parts or '\\' in member.filename
+                        or ':' in member.filename or member.filename in seen
+                        or (member.external_attr >> 16) & 0o170000 == 0o120000
+                        or member.file_size > MAX_DATABASE_BYTES):
+                    raise SyncError('CSV ZIP 항목이 올바르지 않습니다.')
+                seen.add(member.filename)
+                if excluded_location(path.name):
+                    continue
+                # A new ZipInfo avoids mutating source member offsets while streaming.
+                info = zipfile.ZipInfo(member.filename, date_time=member.date_time)
+                info.compress_type = zipfile.ZIP_DEFLATED
+                info.external_attr = member.external_attr
+                if member.is_dir():
+                    output.writestr(info, b'')
+                else:
+                    with source.open(member) as contents, output.open(info, 'w') as destination:
+                        shutil.copyfileobj(contents, destination, length=1024 * 1024)
+        filtered.replace(archive)
+    finally:
+        filtered.unlink(missing_ok=True)
+
+
 def extract_csv(archive: Path, target: Path, *, edition: str = EDITION) -> list[str]:
+    locales = '|'.join(re.escape(locale) for locale in sorted(LOCATION_LOCALES))
     csv_re = re.compile(r'^' + re.escape(edition)
-                        + r'-(?:Blocks-IPv[46]|Locations-[A-Za-z-]+)\.csv$')
+                        + r'-(?:Blocks-IPv[46]|Locations-(?:' + locales + r'))\.csv$')
     required_csv = {edition + '-Blocks-IPv4.csv', edition + '-Blocks-IPv6.csv',
                     edition + '-Locations-en.csv'}
     found = set()
@@ -346,13 +392,15 @@ def publish(repository: str, target: str, folder: Path, meta: dict, items: list[
              f"Free GeoLite2 Country + City MMDB and CSV\n\n"
              f"Country database build: {built}\n\n"
              f"City database build: {city_built}\n\n"
-             'Assets include both original MMDBs, original CSV ZIPs, individual CSV files, '
+             'Assets include both original MMDBs, CSV ZIPs filtered to English and '
+             'Korean Locations where available, individual CSV files, '
              'metadata and SHA256SUMS.\n\n'
              'This product includes GeoLite Data created by MaxMind, available from '
              'https://www.maxmind.com/.\n\n'
              'Data: https://creativecommons.org/licenses/by-sa/4.0/ and '
              'https://www.maxmind.com/en/geolite/eula. '
-             'Original database bytes are unmodified. Use current data and delete superseded copies.\n')
+             'MMDB bytes and retained CSV contents are unmodified; CSV ZIPs are repacked '
+             'to remove other Locations languages. Use current data and delete superseded copies.\n')
     notes_path = folder / 'release-notes.md'
     notes_path.write_text(notes, encoding='utf-8')
     files = [str(folder / name) for name in sorted(asset_names)]
@@ -435,12 +483,17 @@ def sync(repository: str, target: str, account: str, key: str, keep: int,
             download(account, key, 'zip', csv_archive, edition=CSV_EDITION)
             download(account, key, 'zip.sha256', csv_checksum, edition=CSV_EDITION)
             verify_archive(csv_archive, csv_checksum)
+            source_csv_sha256 = file_sha256(csv_archive)
+            filter_csv_archive(csv_archive)
             csv_files = extract_csv(csv_archive, folder)
             meta = validate_database(folder / DATABASE, now, max_age_days)
             meta['last_modified'] = modified
             meta['csv_last_modified'] = csv_modified
             meta['csv_files'] = csv_files
             meta['csv_sha256'] = file_sha256(csv_archive)
+            meta['source_csv_sha256'] = source_csv_sha256
+            meta['csv_archive_policy'] = CSV_ARCHIVE_POLICY
+            meta['location_locales'] = sorted(LOCATION_LOCALES)
 
             # City is a free GeoLite2 edition. Keep its license files separate from Country.
             city_folder = folder / 'city'
@@ -456,12 +509,15 @@ def sync(repository: str, target: str, account: str, key: str, keep: int,
             download(account, key, 'zip', city_csv_archive, edition=CITY_CSV_EDITION)
             download(account, key, 'zip.sha256', city_csv_checksum, edition=CITY_CSV_EDITION)
             verify_archive(city_csv_archive, city_csv_checksum)
+            city_source_csv_sha256 = file_sha256(city_csv_archive)
+            filter_csv_archive(city_csv_archive)
             city_csv_files = extract_csv(city_csv_archive, folder, edition=CITY_EDITION)
             city_meta = validate_database(city_folder / CITY_DATABASE, now, max_age_days,
                                           edition=CITY_EDITION)
             city_meta.update({'last_modified': city_modified,
                               'csv_last_modified': city_csv_modified,
                               'csv_files': city_csv_files,
+                              'source_csv_sha256': city_source_csv_sha256,
                               'csv_sha256': file_sha256(city_csv_archive)})
             shutil.move(str(city_folder / CITY_DATABASE), str(folder / CITY_DATABASE))
             for name in ('COPYRIGHT.txt', 'LICENSE.txt'):
@@ -469,7 +525,7 @@ def sync(repository: str, target: str, account: str, key: str, keep: int,
             meta['city'] = city_meta
             # A City-only update must create a new release even if Country is unchanged.
             revision_parts = [meta['sha256'], meta['csv_sha256'],
-                              city_meta['sha256'], city_meta['csv_sha256']]
+                              city_meta['sha256'], city_meta['csv_sha256'], CSV_ARCHIVE_POLICY]
             meta['revision'] = hashlib.sha256(':'.join(revision_parts).encode()).hexdigest()[:12]
             if old and meta['build_epoch'] < old['build_epoch']:
                 raise SyncError('기존 배포본보다 오래된 MMDB가 내려와 게시하지 않습니다.')
