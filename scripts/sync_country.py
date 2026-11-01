@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Publish verified GeoLite2 Country databases, then prune managed releases."""
+"""Publish verified free GeoLite2 Country + City MMDB/CSV in one release."""
 
 from __future__ import annotations
 
@@ -25,15 +25,26 @@ EDITION = 'GeoLite2-Country'
 DATABASE = EDITION + '.mmdb'
 CSV_EDITION = EDITION + '-CSV'
 CSV_ARCHIVE = CSV_EDITION + '.zip'
-CSV_RE = re.compile(r'^GeoLite2-Country-(?:Blocks-IPv[46]|Locations-[A-Za-z-]+)\.csv$')
 REQUIRED_CSV = {EDITION + '-Blocks-IPv4.csv', EDITION + '-Blocks-IPv6.csv',
                 EDITION + '-Locations-en.csv'}
+# Country names, tags and marker remain compatible with existing download URLs.
+CITY_EDITION = 'GeoLite2-City'
+CITY_DATABASE = CITY_EDITION + '.mmdb'
+CITY_CSV_EDITION = CITY_EDITION + '-CSV'
+CITY_CSV_ARCHIVE = CITY_CSV_EDITION + '.zip'
+CITY_REQUIRED_CSV = {CITY_EDITION + '-Blocks-IPv4.csv', CITY_EDITION + '-Blocks-IPv6.csv',
+                     CITY_EDITION + '-Locations-en.csv'}
+CITY_LICENSE_ASSETS = {CITY_EDITION + '-COPYRIGHT.txt', CITY_EDITION + '-LICENSE.txt'}
 MARKER = '<!-- geolite2-country-sync:v1 '
 TAG_RE = re.compile(r'^geolite2-country-([0-9]{9,12})-([0-9a-f]{12})$')
 STATE_PATH = '.github/sync-state.json'
-MAX_DATABASE_BYTES = 128 * 1024 * 1024
-REQUIRED_ASSETS = {DATABASE, DATABASE + '.sha256', CSV_ARCHIVE, CSV_ARCHIVE + '.sha256',
+MAX_DATABASE_BYTES = 512 * 1024 * 1024
+MAX_CSV_UNPACKED_BYTES = 1024 * 1024 * 1024
+COUNTRY_REQUIRED_ASSETS = {DATABASE, DATABASE + '.sha256', CSV_ARCHIVE, CSV_ARCHIVE + '.sha256',
                    'SHA256SUMS', 'metadata.json', 'COPYRIGHT.txt', 'LICENSE.txt'} | REQUIRED_CSV
+REQUIRED_ASSETS = (COUNTRY_REQUIRED_ASSETS | CITY_REQUIRED_CSV | CITY_LICENSE_ASSETS
+                   | {CITY_DATABASE, CITY_DATABASE + '.sha256', CITY_CSV_ARCHIVE,
+                      CITY_CSV_ARCHIVE + '.sha256'})
 UTC = timezone.utc
 
 
@@ -43,6 +54,15 @@ class SyncError(RuntimeError):
 
 def utc_now() -> datetime:
     return datetime.now(UTC)
+
+
+def file_sha256(path: Path) -> str:
+    """Hash large City CSVs without loading an entire file into memory."""
+    digest = hashlib.sha256()
+    with path.open('rb') as source:
+        for chunk in iter(lambda: source.read(1024 * 1024), b''):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def summary(message: str) -> None:
@@ -97,16 +117,26 @@ def release_metadata(release: dict) -> dict | None:
                 or not re.fullmatch(r'[0-9a-f]{64}', meta.get('csv_sha256', ''))
                 or str(meta['build_epoch']) != tag[1] or meta.get('revision') != tag[2]):
             return None
+        # Legacy Country-only releases remain recognizable for safe migration/cleanup.
+        city = meta.get('city')
+        if city is not None and (
+                not isinstance(city, dict) or city.get('database_type') != CITY_EDITION
+                or type(city.get('build_epoch')) is not int
+                or not re.fullmatch(r'[0-9a-f]{64}', city.get('sha256', ''))
+                or not re.fullmatch(r'[0-9a-f]{64}', city.get('csv_sha256', ''))):
+            return None
         return meta
     except (ValueError, KeyError, TypeError):
         return None
 
 
-def complete(release: dict) -> bool:
+def complete(release: dict, *, require_city: bool = True) -> bool:
     assets = {a['name'] for a in release.get('assets', [])
               if a.get('state') == 'uploaded' and a.get('size', 0) > 0}
     meta = release_metadata(release) or {}
-    expected = REQUIRED_ASSETS | set(meta.get('assets', {}))
+    if not meta or (require_city and not meta.get('city')):
+        return False
+    expected = (REQUIRED_ASSETS if require_city else COUNTRY_REQUIRED_ASSETS) | set(meta.get('assets', {}))
     return not release.get('draft') and not release.get('prerelease') and expected <= assets
 
 
@@ -123,7 +153,10 @@ def cleanup_candidates(items: list[dict], current_tag: str, keep: int,
     current_epoch = release_metadata(current)['build_epoch']
     return [r for r in managed if r['tag_name'] != current_tag
             and release_metadata(r)['build_epoch'] <= current_epoch
-            and (r['tag_name'] not in protected or release_metadata(r)['build_epoch'] < cutoff)]
+            and (r['tag_name'] not in protected
+                 or min(release_metadata(r)['build_epoch'],
+                        release_metadata(r).get('city', {}).get('build_epoch',
+                                                                 release_metadata(r)['build_epoch'])) < cutoff)]
 
 
 def curl_config(account: str, key: str) -> str:
@@ -174,13 +207,13 @@ def verify_archive(archive: Path, checksum: Path) -> None:
     if not 0 < archive.stat().st_size <= MAX_DATABASE_BYTES:
         raise SyncError('다운로드한 압축파일 크기가 올바르지 않습니다.')
     match = re.match(r'^([0-9a-fA-F]{64})(?:\s|$)', checksum.read_text().strip())
-    digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+    digest = file_sha256(archive)
     if not match or digest != match[1].lower():
         raise SyncError('MaxMind 압축파일 SHA-256 검증에 실패했습니다. 게시하지 않습니다.')
 
 
-def extract_files(archive: Path, target: Path) -> None:
-    wanted = {DATABASE, 'COPYRIGHT.txt', 'LICENSE.txt'}
+def extract_files(archive: Path, target: Path, *, edition: str = EDITION) -> None:
+    wanted = {edition + '.mmdb', 'COPYRIGHT.txt', 'LICENSE.txt'}
     found = set()
     with tarfile.open(archive, 'r:gz') as source:
         for member in source:
@@ -202,16 +235,20 @@ def extract_files(archive: Path, target: Path) -> None:
         raise SyncError('압축파일에 MMDB, COPYRIGHT.txt 또는 LICENSE.txt가 없습니다.')
 
 
-def extract_csv(archive: Path, target: Path) -> list[str]:
+def extract_csv(archive: Path, target: Path, *, edition: str = EDITION) -> list[str]:
+    csv_re = re.compile(r'^' + re.escape(edition)
+                        + r'-(?:Blocks-IPv[46]|Locations-[A-Za-z-]+)\.csv$')
+    required_csv = {edition + '-Blocks-IPv4.csv', edition + '-Blocks-IPv6.csv',
+                    edition + '-Locations-en.csv'}
     found = set()
     with zipfile.ZipFile(archive) as source:
         entries = source.infolist()
-        if len(entries) > 100 or sum(i.file_size for i in entries) > 256 * 1024 * 1024:
+        if len(entries) > 100 or sum(i.file_size for i in entries) > MAX_CSV_UNPACKED_BYTES:
             raise SyncError('CSV ZIP의 크기 또는 항목 수가 허용 범위를 벗어났습니다.')
         for member in entries:
             path = PurePosixPath(member.filename)
             name = path.name
-            if not CSV_RE.fullmatch(name):
+            if not csv_re.fullmatch(name):
                 continue
             if (member.is_dir() or path.is_absolute() or '..' in path.parts or name in found
                     or (member.external_attr >> 16) & 0o170000 == 0o120000
@@ -219,17 +256,20 @@ def extract_csv(archive: Path, target: Path) -> list[str]:
                 raise SyncError('CSV ZIP 항목이 올바르지 않습니다.')
             with source.open(member) as stream, (target / name).open('wb') as output:
                 shutil.copyfileobj(stream, output)
-            validate_csv(target / name)
+            validate_csv(target / name, edition=edition)
             found.add(name)
-    if not REQUIRED_CSV <= found:
-        raise SyncError('Country IPv4·IPv6 Blocks 또는 영어 Locations CSV가 없습니다.')
+    if not required_csv <= found:
+        raise SyncError(edition + ' IPv4·IPv6 Blocks 또는 영어 Locations CSV가 없습니다.')
     return sorted(found)
 
 
-def validate_csv(path: Path) -> None:
+def validate_csv(path: Path, *, edition: str = EDITION) -> None:
     blocks = '-Blocks-IPv' in path.name
     required = ({'network', 'geoname_id', 'registered_country_geoname_id'} if blocks else
                 {'geoname_id', 'locale_code', 'country_iso_code', 'country_name'})
+    if edition == CITY_EDITION:
+        required |= ({'latitude', 'longitude', 'accuracy_radius'} if blocks else
+                     {'city_name', 'time_zone'})
     with path.open(encoding='utf-8-sig', newline='') as source:
         reader = csv.DictReader(source)
         columns = reader.fieldnames or []
@@ -252,13 +292,14 @@ def validate_csv(path: Path) -> None:
             raise SyncError('CSV 데이터가 비어 있습니다: ' + path.name)
 
 
-def validate_database(path: Path, now: datetime, max_age_days: int) -> dict:
+def validate_database(path: Path, now: datetime, max_age_days: int,
+                      *, edition: str = EDITION) -> dict:
     import maxminddb
 
     with maxminddb.open_database(str(path)) as reader:
         metadata = reader.metadata()
-        if metadata.database_type != EDITION or metadata.node_count <= 0:
-            raise SyncError('GeoLite2 Country 형식의 MMDB가 아닙니다.')
+        if metadata.database_type != edition or metadata.node_count <= 0:
+            raise SyncError(edition + ' 형식의 MMDB가 아닙니다.')
         built = datetime.fromtimestamp(metadata.build_epoch, UTC)
         if built > now + timedelta(days=1) or built < now - timedelta(days=max_age_days):
             raise SyncError('MMDB 생성일이 허용 범위를 벗어났습니다. 게시하지 않습니다.')
@@ -268,7 +309,7 @@ def validate_database(path: Path, now: datetime, max_age_days: int) -> dict:
             reader.get('2606:4700:4700::1111')
         return {'database_type': metadata.database_type, 'build_epoch': metadata.build_epoch,
                 'ip_version': metadata.ip_version,
-                'sha256': hashlib.sha256(path.read_bytes()).hexdigest()}
+                'sha256': file_sha256(path)}
 
 
 def publish(repository: str, target: str, folder: Path, meta: dict, items: list[dict]) -> dict:
@@ -285,20 +326,27 @@ def publish(repository: str, target: str, folder: Path, meta: dict, items: list[
         gh('release', 'delete', tag, '--repo', repository, '--yes')
 
     built = datetime.fromtimestamp(meta['build_epoch'], UTC).isoformat()
+    city = meta['city']
+    city_built = datetime.fromtimestamp(city['build_epoch'], UTC).isoformat()
     (folder / (DATABASE + '.sha256')).write_text(f"{meta['sha256']}  {DATABASE}\n")
     (folder / (CSV_ARCHIVE + '.sha256')).write_text(f"{meta['csv_sha256']}  {CSV_ARCHIVE}\n")
-    asset_names = (REQUIRED_ASSETS - {'SHA256SUMS', 'metadata.json'}) | set(meta.get('csv_files', []))
-    meta['assets'] = {name: hashlib.sha256((folder / name).read_bytes()).hexdigest()
+    (folder / (CITY_DATABASE + '.sha256')).write_text(f"{city['sha256']}  {CITY_DATABASE}\n")
+    (folder / (CITY_CSV_ARCHIVE + '.sha256')).write_text(f"{city['csv_sha256']}  {CITY_CSV_ARCHIVE}\n")
+    asset_names = ((REQUIRED_ASSETS - {'SHA256SUMS', 'metadata.json'})
+                   | set(meta.get('csv_files', [])) | set(city.get('csv_files', [])))
+    meta['assets'] = {name: file_sha256(folder / name)
                       for name in sorted(asset_names)}
     (folder / 'metadata.json').write_text(json.dumps(meta, indent=2) + '\n')
     asset_names.add('metadata.json')
-    hashes = [f"{hashlib.sha256((folder / name).read_bytes()).hexdigest()}  {name}\n"
+    hashes = [f"{file_sha256(folder / name)}  {name}\n"
               for name in sorted(asset_names)]
     (folder / 'SHA256SUMS').write_text(''.join(hashes))
     asset_names.add('SHA256SUMS')
     notes = (f"{MARKER}{json.dumps(meta, separators=(',', ':'))} -->\n\n"
-             f"GeoLite2 Country MMDB + CSV / database build: {built}\n\n"
-             'Assets include the original MMDB, original CSV ZIP, individual CSV files, '
+             f"Free GeoLite2 Country + City MMDB and CSV\n\n"
+             f"Country database build: {built}\n\n"
+             f"City database build: {city_built}\n\n"
+             'Assets include both original MMDBs, original CSV ZIPs, individual CSV files, '
              'metadata and SHA256SUMS.\n\n'
              'This product includes GeoLite Data created by MaxMind, available from '
              'https://www.maxmind.com/.\n\n'
@@ -309,7 +357,7 @@ def publish(repository: str, target: str, folder: Path, meta: dict, items: list[
     notes_path.write_text(notes, encoding='utf-8')
     files = [str(folder / name) for name in sorted(asset_names)]
     gh('release', 'create', tag, *files, '--repo', repository, '--target', target, '--draft',
-       '--title', f'GeoLite2 Country {built[:10]}', '--notes-file', str(notes_path))
+       '--title', f'GeoLite2 Country + City {built[:10]}', '--notes-file', str(notes_path))
     # Publish only after every asset was uploaded successfully.
     gh('release', 'edit', tag, '--repo', repository, '--draft=false', '--latest')
     created = api(f'repos/{repository}/releases/tags/{tag}')
@@ -317,7 +365,7 @@ def publish(repository: str, target: str, folder: Path, meta: dict, items: list[
         raise SyncError('게시된 Release의 첨부파일 확인에 실패했습니다. 이전 Release는 유지합니다.')
     for asset in created['assets']:
         if asset['name'] in asset_names:
-            expected = hashlib.sha256((folder / asset['name']).read_bytes()).hexdigest()
+            expected = file_sha256(folder / asset['name'])
             if asset['size'] != (folder / asset['name']).stat().st_size:
                 raise SyncError('게시된 첨부파일 크기가 다릅니다. 이전 Release는 유지합니다.')
             if asset.get('digest') and asset['digest'] != 'sha256:' + expected:
@@ -331,7 +379,7 @@ def record_check(repository: str, target: str, release: dict, now: datetime) -> 
     previous = api(endpoint + '?ref=' + target, allow_not_found=True)
     value = {**release_metadata(release), 'release_tag': release['tag_name'],
              'checked_at': now.isoformat()}
-    body = {'message': 'chore: record GeoLite2 Country update check', 'branch': target,
+    body = {'message': 'chore: record GeoLite2 Country + City update check', 'branch': target,
             'content': base64.b64encode((json.dumps(value, indent=2) + '\n').encode()).decode()}
     if previous:
         body['sha'] = previous['sha']
@@ -345,8 +393,11 @@ def sync(repository: str, target: str, account: str, key: str, keep: int,
     if not 1 <= keep <= 100 or not 1 <= max_age_days <= 30:
         raise SyncError('KEEP_RELEASES는 1~100, MAX_AGE_DAYS는 1~30이어야 합니다.')
     items = releases(repository)
-    published = [r for r in items if release_metadata(r) and complete(r)]
-    previous = max(published, key=lambda r: release_metadata(r)['build_epoch'], default=None)
+    published = [r for r in items if release_metadata(r) and complete(r, require_city=False)]
+    previous = max(published, key=lambda r: (
+        release_metadata(r)['build_epoch'],
+        release_metadata(r).get('city', {}).get('build_epoch', 0),
+        r.get('published_at') or ''), default=None)
     with tempfile.TemporaryDirectory(prefix='geolite2-country-') as directory:
         folder = Path(directory)
         head = folder / 'headers.txt'
@@ -355,12 +406,24 @@ def sync(repository: str, target: str, account: str, key: str, keep: int,
         csv_head = folder / 'csv-headers.txt'
         download(account, key, 'zip', csv_head, head=True, edition=CSV_EDITION)
         csv_modified = last_modified(csv_head.read_text())
+        city_head = folder / 'city-headers.txt'
+        download(account, key, 'tar.gz', city_head, head=True, edition=CITY_EDITION)
+        city_modified = last_modified(city_head.read_text())
+        city_csv_head = folder / 'city-csv-headers.txt'
+        download(account, key, 'zip', city_csv_head, head=True, edition=CITY_CSV_EDITION)
+        city_csv_modified = last_modified(city_csv_head.read_text())
         old = release_metadata(previous) if previous else None
-        fresh = old and old['build_epoch'] >= int((now - timedelta(days=max_age_days)).timestamp())
-        if (old and modified and csv_modified and modified == old.get('last_modified')
-                and csv_modified == old.get('csv_last_modified') and fresh):
+        old_city = old.get('city') if old else None
+        fresh = (old and old_city and min(old['build_epoch'], old_city['build_epoch'])
+                 >= int((now - timedelta(days=max_age_days)).timestamp()))
+        if (old and complete(previous) and modified and csv_modified
+                and city_modified and city_csv_modified
+                and modified == old.get('last_modified')
+                and csv_modified == old.get('csv_last_modified')
+                and city_modified == old_city.get('last_modified')
+                and city_csv_modified == old_city.get('csv_last_modified') and fresh):
             current = previous
-            summary('MMDB·CSV 새 버전이 없어 파일 다운로드와 Release 생성을 건너뛰었습니다.')
+            summary('Country·City MMDB·CSV 새 버전이 없어 파일 다운로드와 Release 생성을 건너뛰었습니다.')
         else:
             archive, checksum = folder / 'country.tar.gz', folder / 'country.tar.gz.sha256'
             download(account, key, 'tar.gz', archive)
@@ -377,12 +440,43 @@ def sync(repository: str, target: str, account: str, key: str, keep: int,
             meta['last_modified'] = modified
             meta['csv_last_modified'] = csv_modified
             meta['csv_files'] = csv_files
-            meta['csv_sha256'] = hashlib.sha256(csv_archive.read_bytes()).hexdigest()
-            meta['revision'] = hashlib.sha256((meta['sha256'] + ':' + meta['csv_sha256']).encode()).hexdigest()[:12]
+            meta['csv_sha256'] = file_sha256(csv_archive)
+
+            # City is a free GeoLite2 edition. Keep its license files separate from Country.
+            city_folder = folder / 'city'
+            city_folder.mkdir()
+            city_archive = folder / 'city.tar.gz'
+            city_checksum = folder / 'city.tar.gz.sha256'
+            download(account, key, 'tar.gz', city_archive, edition=CITY_EDITION)
+            download(account, key, 'tar.gz.sha256', city_checksum, edition=CITY_EDITION)
+            verify_archive(city_archive, city_checksum)
+            extract_files(city_archive, city_folder, edition=CITY_EDITION)
+            city_csv_archive = folder / CITY_CSV_ARCHIVE
+            city_csv_checksum = folder / 'city-csv-download.sha256'
+            download(account, key, 'zip', city_csv_archive, edition=CITY_CSV_EDITION)
+            download(account, key, 'zip.sha256', city_csv_checksum, edition=CITY_CSV_EDITION)
+            verify_archive(city_csv_archive, city_csv_checksum)
+            city_csv_files = extract_csv(city_csv_archive, folder, edition=CITY_EDITION)
+            city_meta = validate_database(city_folder / CITY_DATABASE, now, max_age_days,
+                                          edition=CITY_EDITION)
+            city_meta.update({'last_modified': city_modified,
+                              'csv_last_modified': city_csv_modified,
+                              'csv_files': city_csv_files,
+                              'csv_sha256': file_sha256(city_csv_archive)})
+            shutil.move(str(city_folder / CITY_DATABASE), str(folder / CITY_DATABASE))
+            for name in ('COPYRIGHT.txt', 'LICENSE.txt'):
+                shutil.move(str(city_folder / name), str(folder / (CITY_EDITION + '-' + name)))
+            meta['city'] = city_meta
+            # A City-only update must create a new release even if Country is unchanged.
+            revision_parts = [meta['sha256'], meta['csv_sha256'],
+                              city_meta['sha256'], city_meta['csv_sha256']]
+            meta['revision'] = hashlib.sha256(':'.join(revision_parts).encode()).hexdigest()[:12]
             if old and meta['build_epoch'] < old['build_epoch']:
                 raise SyncError('기존 배포본보다 오래된 MMDB가 내려와 게시하지 않습니다.')
+            if old_city and city_meta['build_epoch'] < old_city['build_epoch']:
+                raise SyncError('기존 배포본보다 오래된 City MMDB가 내려와 게시하지 않습니다.')
             current = publish(repository, target, folder, meta, items)
-            summary('검증한 MMDB·CSV가 Release에 준비되었습니다: ' + current['tag_name'])
+            summary('검증한 Country·City MMDB·CSV가 Release에 준비되었습니다: ' + current['tag_name'])
 
         # Re-fetch after publish. A failed download/upload never reaches deletion.
         candidates = cleanup_candidates(releases(repository), current['tag_name'], keep, max_age_days, now)
@@ -392,6 +486,8 @@ def sync(repository: str, target: str, account: str, key: str, keep: int,
         record_check(repository, target, current, now)
         summary(f"최신 다운로드: https://github.com/{repository}/releases/latest/download/{DATABASE}")
         summary(f"최신 CSV ZIP: https://github.com/{repository}/releases/latest/download/{CSV_ARCHIVE}")
+        summary(f"최신 City MMDB: https://github.com/{repository}/releases/latest/download/{CITY_DATABASE}")
+        summary(f"최신 City CSV ZIP: https://github.com/{repository}/releases/latest/download/{CITY_CSV_ARCHIVE}")
 
 
 def main() -> int:
